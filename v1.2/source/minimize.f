@@ -16,11 +16,13 @@ c
 c
       program minimize
       use mpi
+      use domdec
       implicit none
       integer ierr
       call MPI_INIT(ierr)
+      COMM_WORLD = MPI_COMM_WORLD
       call minimize_bis
-      call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+      call MPI_BARRIER(COMM_WORLD,ierr)
       call MPI_FINALIZE(ierr)
       end 
 

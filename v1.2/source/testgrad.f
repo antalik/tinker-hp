@@ -75,6 +75,7 @@ c
       app_id = testgrad_a
 c
       call MPI_INIT(ierr)
+      COMM_WORLD = MPI_COMM_WORLD
 c
 c     set up the structure and mechanics calculation
 c

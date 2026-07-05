@@ -17,12 +17,14 @@ c
 c
       program pimd
       use mpi
+      use domdec
       implicit none
       integer ierr,nthreadsupport
 c      call MPI_INIT(ierr)
       call MPI_INIT_THREAD(MPI_THREAD_MULTIPLE,nthreadsupport,ierr)
+      COMM_WORLD = MPI_COMM_WORLD
       call pimd_bis
-      call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+      call MPI_BARRIER(COMM_WORLD,ierr)
       call MPI_FINALIZE(ierr)
       end
 c

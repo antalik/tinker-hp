@@ -311,7 +311,7 @@ c
             write(iout,*) 'Lambda-dynamics not compatible with',
      $      'separate cores for PME'
           end if
-          call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+          call MPI_BARRIER(COMM_WORLD,ierr)
           call fatal
         end if
         if (path_integral_md) then

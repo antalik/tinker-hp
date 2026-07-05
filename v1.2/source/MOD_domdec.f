@@ -9,8 +9,11 @@ c     ##  module domdec  --  system parameters for OpenMP/MPI domain decompositi
 c     ##                                                                                        ##
 c     ############################################################################################
 c
-c     nproctot  total number of MPI process (within MPI_COMM_WORLD)
-c     ranktot  total rank of the MPI process within MPI_COMM_WORLD 
+c     COMM_WORLD Tinker-HP's copy of the world communicator. Set to
+c      MPI_COMM_WORLD right after MPI_Init; kept in a variable so it can
+c      later be redefined (e.g. to a sub-communicator of a larger job)
+c     nproctot  total number of MPI process (within COMM_WORLD)
+c     ranktot  total rank of the MPI process within COMM_WORLD
 c     nxdd = number of subdivisions along the x axis
 c     nydd = number of subdivisions along the y axis
 c     nzdd = number of subdivisions along the z axis
@@ -110,6 +113,7 @@ c
       implicit none
       integer nxdd,nydd,nzdd
       integer nproctot,ranktot
+      integer COMM_WORLD
       integer, target :: COMM_TINKER,nproc,rank
       integer rank_bis,nthread,nrec,ndir,comm_rec,comm_dir
       integer COMM_POLYMER, rank_polymer, nproc_polymer
