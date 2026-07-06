@@ -340,6 +340,9 @@ c
          if (rank.eq.0) write (iout,440)
   440    format (/,' Molecular Dynamics Trajectory via',
      &              ' r-RESPA-1 MTS Algorithm')
+      else if (integrate .eq. 'MIMIC') then
+         if (rank.eq.0) write (iout,445)
+  445    format (/,' MiMiC QM/MM MM-client force-server')
       else
          if (rank.eq.0) write (iout,480)
   480    format (/,' Molecular Dynamics Trajectory via',
@@ -354,29 +357,34 @@ c
          endif
       endif
 c
+c     MiMiC run or 
 c     integrate equations of motion to take a time step
 c
-      do istep = 1, nstep
-         time0 = mpi_wtime()
-         if (integrate .eq. 'VERLET') then
-            call verlet (istep,dt)
-         else if (integrate .eq. 'RESPA') then
-            call respa (istep,dt)
-         else if (integrate .eq. 'BAOAB') then
-           call baoab(istep,dt)
-         else if (integrate .eq. 'BAOABRESPA') then
-           call baoabrespa(istep,dt)
-         else if (integrate .eq. 'BAOABRESPA1') then
-           call baoabrespa1(istep,dt)
-         else if (integrate .eq. 'RESPA1') then
-           call respa1(istep,dt)
-         else
-            call beeman (istep,dt)
-        end if
-         time1 = mpi_wtime()
-         timestep = timestep + time1-time0
-         call mdstattime(istep,dt)
-      end do
+      if (integrate .eq. 'MIMIC') then
+         call mimic_loop
+      else
+         do istep = 1, nstep
+            time0 = mpi_wtime()
+            if (integrate .eq. 'VERLET') then
+               call verlet (istep,dt)
+            else if (integrate .eq. 'RESPA') then
+               call respa (istep,dt)
+            else if (integrate .eq. 'BAOAB') then
+              call baoab(istep,dt)
+            else if (integrate .eq. 'BAOABRESPA') then
+              call baoabrespa(istep,dt)
+            else if (integrate .eq. 'BAOABRESPA1') then
+              call baoabrespa1(istep,dt)
+            else if (integrate .eq. 'RESPA1') then
+              call respa1(istep,dt)
+            else
+               call beeman (istep,dt)
+           end if
+            time1 = mpi_wtime()
+            timestep = timestep + time1-time0
+            call mdstattime(istep,dt)
+         end do
+      end if
 c
 c     perform any final tasks before program exit
 c

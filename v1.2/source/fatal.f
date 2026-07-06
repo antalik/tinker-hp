@@ -17,6 +17,7 @@ c
       subroutine fatal
       use domdec
       use iounit
+      use mimic, only: use_mimic, mimic_abort
       implicit none
 c
 c
@@ -25,5 +26,6 @@ c
       if (rank.eq.0) write (iout,10)
    10 format (/,' TINKER is Unable to Continue; Terminating',
      &           ' the Current Calculation',/)
+      if (use_mimic)  call mimic_abort(1)
       stop
       end

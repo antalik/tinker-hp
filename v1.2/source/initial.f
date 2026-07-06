@@ -34,6 +34,7 @@ c
       use precis
       use replicas
       use timestat
+      use mimic, only: mimic_init
       use mpi
       implicit none
 !$    integer omp_get_num_procs
@@ -61,6 +62,10 @@ c
 c     command line arguments to the program
 c
       call command
+c
+c     split COMM_WORLD if running as a MiMiC client
+c
+      call mimic_init (COMM_WORLD)
 c
 c     Number of MPI processes and rank of the current MPI process
 c

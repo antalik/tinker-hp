@@ -75,6 +75,7 @@ LDADD  = libtinkercalc.a libtinkermod.a libtinkerclv.a
 #
 
 LDADD += $(LIBCOLVARS_LIB) $(LIBTCL_LIB) $(LIBPLUMED_LIB) $(LIB2DECOMP_LIB) $(FFTW_LIBS) $(BLAS) @NVMPICXX@
+LDADD += $(LIBMCL_LIB)
 
 #
 # Declare the Tinker libraries needed by the programs
@@ -245,6 +246,7 @@ libtinkermod_a_SOURCES += MOD_math.f
 libtinkermod_a_SOURCES += MOD_mdstuf.f
 libtinkermod_a_SOURCES += MOD_mdstuf1.f
 libtinkermod_a_SOURCES += MOD_merck.f
+libtinkermod_a_SOURCES += MOD_mimic.f
 libtinkermod_a_SOURCES += MOD_minima.f
 libtinkermod_a_SOURCES += MOD_molcul.f
 libtinkermod_a_SOURCES += MOD_moldyn.f
@@ -501,6 +503,7 @@ libtinkercalc_a_SOURCES += mdsavebeads.f
 libtinkercalc_a_SOURCES += mdstat.f
 libtinkercalc_a_SOURCES += mdstatpi.f
 libtinkercalc_a_SOURCES += mechanic.f
+libtinkercalc_a_SOURCES += mimic_loop.f
 libtinkercalc_a_SOURCES += molecule.f
 libtinkercalc_a_SOURCES += mpistuff.f
 libtinkercalc_a_SOURCES += mutate.f

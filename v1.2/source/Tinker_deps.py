@@ -42,10 +42,10 @@ def get_deps_and_mods(filename):
     split_re     = re.compile("\s*,\s*")
 #
 # Match any MODULE or USE name
-# (except MPI and iso_c_binding, which are not in a source file,  but come with the compiler)
+# (except MPI, iso_c_binding and MCL, which are not in a source file,  but come with the compiler / external libs)
 #
-    dep_re       = re.compile("(?i)(^(?!.*mpi|.*iso_c_binding).*$)")
-    mod_re       = re.compile("(?i)(^(?!.*mpi|.*iso_c_binding).*$)")
+    dep_re       = re.compile("(?i)(^(?!.*mpi|.*iso_c_binding|.*mcl).*$)")
+    mod_re       = re.compile("(?i)(^(?!.*mpi|.*iso_c_binding|.*mcl).*$)")
     within_use_statement = False
     for line in f:
         match = use_line_re.search(line)

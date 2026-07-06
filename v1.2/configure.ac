@@ -323,6 +323,20 @@ AC_ARG_ENABLE([tcl],
               [:]
              )
 
+#
+# Enable MiMiC QM/MM interface. MIMIC will contain the value chosen by the user.
+#
+
+MIMIC=
+MIMIC_PREFIX=
+
+AC_ARG_ENABLE([mimic],
+              [AS_HELP_STRING([--enable-mimic@<:@=MCL_PREFIX@:>@],
+                              [Enable MiMiC QM/MM interface; optionally give the MCL install prefix @<:@default is no@:>@])],
+              [MIMIC="MIMIC"; MIMIC_PREFIX="$enableval"],
+              [:]
+             )
+
 
 
 #
@@ -636,6 +650,32 @@ TCLBADCOMPILMSG="${RED} Invalid wrapped compiler ${YEL}$REALFC${RED} for TCL : m
 	     ]
             )
 #
+# setup MiMiC (MCL)
+#
+       AS_IF([test x$MIMIC = xMIMIC],
+             [ MIMICFLAG="-DMIMIC"
+               #
+               # Resolve the MCL install prefix (contains include/mcl.mod and lib/libmclf).
+               # Priority: --enable-mimic=<prefix>, then $MIMIC_INSTALL_DIR, then the
+               # in-tree mcl/build alongside the tinker-hp checkout.
+               #
+               AS_IF([test "x$MIMIC_PREFIX" != xyes && test "x$MIMIC_PREFIX" != x],
+                     [MCLROOT="$MIMIC_PREFIX"],
+                     [AS_IF([test "x$MIMIC_INSTALL_DIR" != x],
+                            [MCLROOT="$MIMIC_INSTALL_DIR"],
+                            [MCLROOT="$(cd "$srcdir/../../mcl/build" 2>/dev/null && pwd)"])])
+               AS_IF([test ! -f "$MCLROOT/include/mcl.mod"],
+                     [AC_MSG_FAILURE([${RED}MiMiC enabled but mcl.mod not found in $MCLROOT/include. Pass --enable-mimic=<MCL_PREFIX> or set MIMIC_INSTALL_DIR.${CLR}])])
+               LIBMCL_INC="-I $MCLROOT/include"
+               LIBMCL_LIB="-L $MCLROOT/lib -lmclf -lmcl -Wl,-rpath,$MCLROOT/lib"
+               AC_MSG_NOTICE(["$YEL Configuring MiMiC with MCL in $MCLROOT$GRN${CLR}"])
+             ],
+             [ MIMICFLAG=""
+               LIBMCL_INC=""
+               LIBMCL_LIB=""
+             ]
+            )
+#
 # Final setting of the Compiler flags
 #
        case "x$REALFC" in
@@ -657,7 +697,7 @@ AM_CPPFLAGS="$LIBCOLVARS_CPPFLAGS"
 #
 # Flags for .f sources are the same as those for .f90 sources
 # Fortran compiler is the wrapper
-FCFLAGS="$PREPROFLAG $COLVARSFLAG $PLUMEDFLAG $TCLFLAG $FCFLAGS $FORT_FLAGS"
+FCFLAGS="$PREPROFLAG $COLVARSFLAG $PLUMEDFLAG $TCLFLAG $MIMICFLAG $LIBMCL_INC $FCFLAGS $FORT_FLAGS"
 FFLAGS=$FCFLAGS
 FC=$MPIFC
 
@@ -775,6 +815,8 @@ AC_SUBST([INCLUDE_COLVARS_MK],["include "$COLVARSINCLUDE])
 AC_SUBST([LIBTINKERCLV],[$TINKERCOLVARS])
 AC_SUBST([LIBCOLVARS_LIB],[$LIBCOLVARS_LIB])
 AC_SUBST([COLVARSDEP],[$COLVARSDEP])
+AC_SUBST([LIBMCL_INC])
+AC_SUBST([LIBMCL_LIB])
 
 #
 # States that these Makefiles should be generated
