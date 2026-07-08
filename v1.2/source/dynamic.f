@@ -36,6 +36,7 @@ c
       use inform
       use iounit
       use mdstuf
+      use mimic, only: use_mimic
       use moldyn
       use mpi
       use mutant
@@ -49,7 +50,7 @@ c
       integer i,istep,nstep,ierr
       integer mode,next
       real*8 dt,dtdump,time0,time1
-      logical exist,query,use_colvars_
+      logical exist,query,ignore_arguments,use_colvars_
       character*20 keyword
       character*240 record
       character*240 string
@@ -121,151 +122,171 @@ c
          end if
       end do
 c
+c     act as a MiMiC MM client when the MIMIC integrator is selected
+c     since the server drives the calculation, so no run-control
+c     input is read (prevents interactive prompts / hangs)
+c
+
+      ignore_arguments = .false.
+      if (integrate .eq. 'MIMIC') then
+         use_mimic = .true.
+         ignore_arguments = .true.
+
+         nstep  = 0
+         dt     = 0.001d0
+         dtdump = 0.1d0
+         iwrite = 1
+      end if
+c
 c     initialize the simulation length as number of time steps
 c
-      query = .true.
-      call nextarg (string,exist)
-      if (exist) then
-         read (string,*,err=10,end=10)  nstep
-         query = .false.
-      end if
-   10 continue
-      if (query) then
-         write (iout,20)
-   20    format (/,' Enter the Number of Dynamics Steps to be',
-     &              ' Taken :  ',$)
-         read (input,30)  nstep
-   30    format (i10)
-      end if
-c
-c     get the length of the dynamics time step in picoseconds
-c
-      dt = -1.0d0
-      call nextarg (string,exist)
-      if (exist)  read (string,*,err=40,end=40)  dt
-   40 continue
-      do while (dt .lt. 0.0d0)
-         write (iout,50)
-   50    format (/,' Enter the Time Step Length in Femtoseconds',
-     &              ' [1.0] :  ',$)
-         read (input,60,err=70)  dt
-   60    format (f20.0)
-         if (dt .le. 0.0d0)  dt = 1.0d0
-   70    continue
-      end do
-      dt = 0.001d0 * dt
-c
-c     enforce bounds on thermostat and barostat coupling times
-c
-      tautemp = max(tautemp,dt)
-      taupres = max(taupres,dt)
-c
-c     set the time between trajectory snapshot coordinate dumps
-c
-      dtdump = -1.0d0
-      call nextarg (string,exist)
-      if (exist)  read (string,*,err=80,end=80)  dtdump
-   80 continue
-      do while (dtdump .lt. 0.0d0)
-         write (iout,90)
-   90    format (/,' Enter Time between Dumps in Picoseconds',
-     &              ' [0.1] :  ',$)
-         read (input,100,err=110)  dtdump
-  100    format (f20.0)
-         if (dtdump .le. 0.0d0)  dtdump = 0.1d0
-  110    continue
-      end do
-      iwrite = nint(dtdump/dt)
-c
-c     get choice of statistical ensemble for periodic system
-c
-      if (use_bounds) then
-         mode = -1
+      if (.not. ignore_arguments) then
+         query = .true.
          call nextarg (string,exist)
-         if (exist)  read (string,*,err=120,end=120)  mode
-  120    continue
-         do while (mode.lt.1 .or. mode.gt.4)
-            write (iout,130)
-  130       format (/,' Available Statistical Mechanical Ensembles :',
-     &              //,4x,'(1) Microcanonical (NVE)',
-     &              /,4x,'(2) Canonical (NVT)',
-     &              /,4x,'(3) Isoenthalpic-Isobaric (NPH)',
-     &              /,4x,'(4) Isothermal-Isobaric (NPT)',
-     &              //,' Enter the Number of the Desired Choice',
-     &                 ' [1] :  ',$)
-            read (input,140,err=150)  mode
-  140       format (i10)
-            if (mode .le. 0)  mode = 1
-  150       continue
-         end do
-         if (mode.eq.2 .or. mode.eq.4) then
-            isothermal = .true.
-            kelvin = -1.0d0
-            call nextarg (string,exist)
-            if (exist)  read (string,*,err=170,end=170)  kelvin
-  170       continue
-            do while (kelvin .lt. 0.0d0)
-               write (iout,180)
-  180          format (/,' Enter the Desired Temperature in Degrees',
-     &                    ' K [298] :  ',$)
-               read (input,190,err=200)  kelvin
-  190          format (f20.0)
-               if (kelvin .le. 0.0d0)  kelvin = 298.0d0
-  200          continue
-            end do
+         if (exist) then
+            read (string,*,err=10,end=10)  nstep
+            query = .false.
          end if
-         if (mode.eq.3 .or. mode.eq.4) then
-            isobaric = .true.
-            atmsph = -1.0d0
-            call nextarg (string,exist)
-            if (exist)  read (string,*,err=210,end=210)  atmsph
-  210       continue
-            do while (atmsph .lt. 0.0d0)
-               write (iout,220)
-  220          format (/,' Enter the Desired Pressure in Atm',
-     &                    ' [1.0] :  ',$)
-               read (input,230,err=240)  atmsph
-  230          format (f20.0)
-               if (atmsph .le. 0.0d0)  atmsph = 1.0d0
-  240          continue
-            end do
+   10    continue
+         if (query) then
+            write (iout,20)
+   20       format (/,' Enter the Number of Dynamics Steps to be',
+     &                 ' Taken :  ',$)
+            read (input,30)  nstep
+   30       format (i10)
          end if
-      end if
 c
-c     use constant energy or temperature for nonperiodic system
+c        get the length of the dynamics time step in picoseconds
 c
-      if (.not. use_bounds) then
-         mode = -1
+         dt = -1.0d0
          call nextarg (string,exist)
-         if (exist)  read (string,*,err=250,end=250)  mode
-  250    continue
-         do while (mode.lt.1 .or. mode.gt.2)
-            write (iout,260)
-  260       format (/,' Available Simulation Control Modes :',
-     &              //,4x,'(1) Constant Total Energy Value (E)',
-     &              /,4x,'(2) Constant Temperature via Thermostat (T)',
-     &              //,' Enter the Number of the Desired Choice',
-     &                 ' [1] :  ',$)
-            read (input,270,err=280)  mode
-  270       format (i10)
-            if (mode .le. 0)  mode = 1
-  280       continue
+         if (exist)  read (string,*,err=40,end=40)  dt
+   40    continue
+         do while (dt .lt. 0.0d0)
+            write (iout,50)
+   50       format (/,' Enter the Time Step Length in Femtoseconds',
+     &                 ' [1.0] :  ',$)
+            read (input,60,err=70)  dt
+   60       format (f20.0)
+            if (dt .le. 0.0d0)  dt = 1.0d0
+   70       continue
          end do
-         if (mode .eq. 2) then
-            isothermal = .true.
-            kelvin = -1.0d0
+         dt = 0.001d0 * dt
+c
+c        enforce bounds on thermostat and barostat coupling times
+c
+         tautemp = max(tautemp,dt)
+         taupres = max(taupres,dt)
+c
+c        set the time between trajectory snapshot coordinate dumps
+c
+         dtdump = -1.0d0
+         call nextarg (string,exist)
+         if (exist)  read (string,*,err=80,end=80)  dtdump
+   80    continue
+         do while (dtdump .lt. 0.0d0)
+            write (iout,90)
+   90       format (/,' Enter Time between Dumps in Picoseconds',
+     &                 ' [0.1] :  ',$)
+            read (input,100,err=110)  dtdump
+  100       format (f20.0)
+            if (dtdump .le. 0.0d0)  dtdump = 0.1d0
+  110       continue
+         end do
+         iwrite = nint(dtdump/dt)
+c
+c        get choice of statistical ensemble for periodic system
+c
+         if (use_bounds) then
+            mode = -1
             call nextarg (string,exist)
-            if (exist)  read (string,*,err=290,end=290)  kelvin
-  290       continue
-            do while (kelvin .lt. 0.0d0)
-               write (iout,300)
-  300          format (/,' Enter the Desired Temperature in Degrees',
-     &                    ' K [298] :  ',$)
-               read (input,310,err=320)  kelvin
-  310          format (f20.0)
-               if (kelvin .le. 0.0d0)  kelvin = 298.0d0
-  320          continue
+            if (exist)  read (string,*,err=120,end=120)  mode
+  120       continue
+            do while (mode.lt.1 .or. mode.gt.4)
+               write (iout,130)
+  130          format (/,' Available Statistical Mechanical Ensembles'
+     &                 // ' :',
+     &                 //,4x,'(1) Microcanonical (NVE)',
+     &                 /,4x,'(2) Canonical (NVT)',
+     &                 /,4x,'(3) Isoenthalpic-Isobaric (NPH)',
+     &                 /,4x,'(4) Isothermal-Isobaric (NPT)',
+     &                 //,' Enter the Number of the Desired Choice',
+     &                    ' [1] :  ',$)
+               read (input,140,err=150)  mode
+  140          format (i10)
+               if (mode .le. 0)  mode = 1
+  150          continue
             end do
+            if (mode.eq.2 .or. mode.eq.4) then
+               isothermal = .true.
+               kelvin = -1.0d0
+               call nextarg (string,exist)
+               if (exist)  read (string,*,err=170,end=170)  kelvin
+  170          continue
+               do while (kelvin .lt. 0.0d0)
+                  write (iout,180)
+  180             format (/,' Enter the Desired Temperature in Degrees',
+     &                       ' K [298] :  ',$)
+                  read (input,190,err=200)  kelvin
+  190             format (f20.0)
+                  if (kelvin .le. 0.0d0)  kelvin = 298.0d0
+  200             continue
+               end do
+            end if
+            if (mode.eq.3 .or. mode.eq.4) then
+               isobaric = .true.
+               atmsph = -1.0d0
+               call nextarg (string,exist)
+               if (exist)  read (string,*,err=210,end=210)  atmsph
+  210          continue
+               do while (atmsph .lt. 0.0d0)
+                  write (iout,220)
+  220             format (/,' Enter the Desired Pressure in Atm',
+     &                       ' [1.0] :  ',$)
+                  read (input,230,err=240)  atmsph
+  230             format (f20.0)
+                  if (atmsph .le. 0.0d0)  atmsph = 1.0d0
+  240             continue
+               end do
+            end if
+         end if
+c
+c        use constant energy or temperature for nonperiodic system
+c
+         if (.not. use_bounds) then
+            mode = -1
+            call nextarg (string,exist)
+            if (exist)  read (string,*,err=250,end=250)  mode
+  250       continue
+            do while (mode.lt.1 .or. mode.gt.2)
+               write (iout,260)
+  260          format (/,' Available Simulation Control Modes :',
+     &                 //,4x,'(1) Constant Total Energy Value (E)',
+     &                 /,4x,'(2) Constant Temperature via Thermostat'
+     &                 //' (T)',
+     &                 //,' Enter the Number of the Desired Choice',
+     &                    ' [1] :  ',$)
+               read (input,270,err=280)  mode
+  270          format (i10)
+               if (mode .le. 0)  mode = 1
+  280          continue
+            end do
+            if (mode .eq. 2) then
+               isothermal = .true.
+               kelvin = -1.0d0
+               call nextarg (string,exist)
+               if (exist)  read (string,*,err=290,end=290)  kelvin
+  290          continue
+               do while (kelvin .lt. 0.0d0)
+                  write (iout,300)
+  300             format (/,' Enter the Desired Temperature in Degrees',
+     &                       ' K [298] :  ',$)
+                  read (input,310,err=320)  kelvin
+  310             format (f20.0)
+                  if (kelvin .le. 0.0d0)  kelvin = 298.0d0
+  320             continue
+               end do
+            end if
          end if
       end if
 c
@@ -360,7 +381,7 @@ c
 c     MiMiC run or 
 c     integrate equations of motion to take a time step
 c
-      if (integrate .eq. 'MIMIC') then
+      if (use_mimic) then
          call mimic_loop
       else
          do istep = 1, nstep
