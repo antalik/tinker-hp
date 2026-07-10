@@ -28,6 +28,7 @@ c
       use kchrge
       use inform
       use iounit
+      use mimicgroup, only: mimic_group
       use neigh
       use potent
       use pme
@@ -138,6 +139,14 @@ c
    70       continue
          end if
       end do
+c
+c     zero the charges of MiMiC group atoms
+c
+      if (allocated(mimic_group)) then
+         do i = 1, n
+            if (mimic_group(i))  pchg(i) = 0.0d0
+         end do
+      end if
 c
 c     perform dynamic allocation of some local arrays
 c

@@ -18,6 +18,7 @@ c
       use domdec
       use inform
       use iounit
+      use mimicgroup, only: mimic_read_group, mimic_exclude_bonded
       use potent
       use mpi
       implicit none
@@ -29,6 +30,10 @@ c     set the bonded connectivity lists and active atoms
 c
       call attach
       call active
+c
+c     read the MiMiC QM subset (MIMIC_GROUP) before charges/groups/bonded
+c
+      call mimic_read_group
 c
 c     find bonds, angles, torsions, bitorsions and small rings
 c
@@ -81,6 +86,10 @@ c
       call kstrtor
       call kangtor
       call ktortor
+c
+c     drop bonded terms lying entirely within the MiMiC QM subset
+c
+      call mimic_exclude_bonded
 c
 c     assign van der Waals and electrostatic potential parameters
 c

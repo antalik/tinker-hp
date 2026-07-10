@@ -90,6 +90,7 @@ c
       use usage
       use vdw
       use vdwpot
+      use mimicgroup, only: mimic_group
       use mpi
       implicit none
       integer i,j,iglob,kglob,kbis,iivdw,nnvlst
@@ -222,6 +223,8 @@ c
             else
               kglob = vlst(kk,ii)
             end if
+c           skip in-group vdW pairs
+            if (mimic_group(iglob) .and. mimic_group(kglob))  cycle
             if (use_group)  call groups (fgrp,iglob,kglob,0,0,0,0)
             kbis = loc(kglob)
             kv = ired(kglob)
