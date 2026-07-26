@@ -20,6 +20,8 @@ c
       use inform
       use iounit
       use math
+      use mimicfield, only: mimic_add_field
+      use mimicgroup, only: mimic_zero_induced
       use mpole
       use mutant
       use pme
@@ -156,6 +158,10 @@ c
           end do
         end if
       end do
+c
+c     add the external field from mimic to the constant rhs
+c
+      call mimic_add_field(nrhs,npoleloc,ef)
       wtime1 = mpi_wtime()
 c
 c     guess the dipoles:
@@ -246,6 +252,10 @@ c
           end if
         end do
       end do
+c
+c     zero induced dipoles in the mimic group
+c
+      call mimic_zero_induced
 c
 c     update the lists of previous induced dipole values
 c

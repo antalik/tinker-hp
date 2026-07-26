@@ -7,7 +7,6 @@ c
 c     drive the MiMiC MM client
 c
       subroutine mimic_loop
-      use atoms, only: n
       use domdec, only: rank
       use iounit, only: iout
       use mimic
@@ -15,15 +14,13 @@ c
 #ifdef MIMIC
       integer :: request
       logical :: done
-      real*8 :: energy
-      real*8, allocatable :: force(:,:)
 c
       if (rank == 0) write(iout,10)
    10 format (/,' Entering MiMiC QM/MM client loop')
 c
-      allocate(force(3,n))
-      force = 0.0d0
-      energy = 0.0d0
+c     reject the polarization solvers that ignore the external field
+c
+      call mimic_check_polar
 c
       done = .false.
       do while (.not.done)
@@ -60,6 +57,8 @@ c
             call mimic_send_multipole_order
          else if (request == MCL_SEND_PARTICLE_MULTIPOLES) then
             call mimic_send_multipoles
+         else if (request == MCL_SEND_UPDATED_PARTICLE_MULTIPOLES) then
+            call mimic_send_multipoles
          else if (request == MCL_SEND_NUM_CONSTR_BONDS) then
             call mimic_send_num_constr_bonds
          else if (request == MCL_SEND_CONSTR_BOND_PARTICLE_IDS) then
@@ -76,12 +75,20 @@ c
             call mimic_send_boundary_bonds
          else if (request == MCL_RECV_PARTICLE_POSITIONS) then
             call mimic_recv_positions
+         else if (request == MCL_RECV_EL_FIELD_ON_PARTICLE) then
+            call mimic_recv_field
+         else if (request == MCL_COMPUTE_ENERGY) then
+            call mimic_energy
          else if (request == MCL_COMPUTE_FORCES) then
-            call mimic_forces(energy, force)
+            call mimic_forces
          else if (request == MCL_SEND_PARTICLE_FORCES) then
-            call mimic_send_forces(force)
+            call mimic_send_forces
          else if (request == MCL_SEND_ENERGY) then
-            call mimic_send_energy(energy)
+            call mimic_send_energy
+         else if (request == MCL_SEND_INDUCTION_ENERGY) then
+            call mimic_send_induction_energy
+         else if (request == MCL_SEND_PARTICLE_INDUCED_DIPOLES) then
+            call mimic_send_induced_dipoles
          else if (request == MCL_EXIT) then
             done = .true.
          else
@@ -92,7 +99,6 @@ c
          end if
       end do
 c
-      deallocate(force)
       call mimic_finalize
       if (rank == 0) write(iout,30)
    30 format (/,' Leaving MiMiC QM/MM client loop')
@@ -105,69 +111,80 @@ c
       end
 c
 c     ################################################################
-c     ##  subroutine mimic_forces  --  MM energy+forces at current  ##
-c     ##  (server-supplied) coordinates, gathered on rank 0         ##
+c     ##  subroutine mimic_prepare  --  re-decompose for the newly  ##
+c     ##  installed (server-supplied) coordinates                   ##
 c     ################################################################
 c
-c     Re-decomposes for the freshly installed coordinates, evaluates the
-c     MM gradient, and reduces the global potential energy and the full
-c     (3,n) gradient onto rank 0. It orchestrates the same standalone
-c     routines a normal integrator step uses (reassign, gradient,
-c     commforces, ...) without any integration. The returned "force"
-c     array is the gradient dE/dx; the sign flip to a physical force is
-c     done when sending (mimic_send_forces).
+c     Runs the same standalone routines a normal integrator step uses to
+c     redistribute atoms over domains and rebuild the neighbor lists,
+c     without any integration.
 c
-      subroutine mimic_forces(energy, force)
-      use atoms, only: n
+      subroutine mimic_prepare
       use cutoff, only: use_list
-      use domdec, only: nloc, glob, nbloc, COMM_TINKER
-      use energi, only: esum
-      use mpi
       implicit none
-      real*8 :: energy
-      real*8 :: force(3,n)
-      real*8, allocatable :: derivs(:,:), fglob(:,:)
-      real*8 :: epot
-      integer :: i, iglob, ierr
       integer, save :: step = 0
 c
       step = step + 1
-c
-c     redistribute atoms to domains for the new coordinates
 c
       call reassign
       call reassignpme(.false.)
       call commpos
       call commposrec
 c
-      allocate(derivs(3,nbloc))
-      derivs = 0.0d0
       call reinitnl(step)
       call mechanic_up_para(step)
       call allocstep
       if (use_list)  call nblist(step)
+      end
+c
+c     ################################################################
+c     ##  subroutine mimic_energy  --  MM energy and induced        ##
+c     ##  dipoles at the current coordinates, no forces             ##
+c     ################################################################
+c
+c     Answers MCL_COMPUTE_ENERGY. The energy stays rank-local; it is
+c     reduced by whichever send request asks for it.
+c
+      subroutine mimic_energy
+      use mimic, only: mimic_stash_energy
+      implicit none
+      real*8 energy
+      real*8 :: epot
+c
+      call mimic_prepare
+      epot = energy ()
+      call mimic_stash_energy(epot)
+      end
+c
+c     ################################################################
+c     ##  subroutine mimic_forces  --  MM energy, induced dipoles   ##
+c     ##  and gradient at the current coordinates                   ##
+c     ################################################################
+c
+c     Answers MCL_COMPUTE_FORCES. Both the energy and the gradient stay
+c     rank-local; the gradient is scattered into a sparse global buffer
+c     and reduced only when the forces are requested. The stash holds
+c     dE/dx; the sign flip to a physical force is done when sending.
+c
+      subroutine mimic_forces
+      use domdec, only: nbloc
+      use mimic, only: mimic_stash_energy, mimic_stash_forces
+      implicit none
+      real*8, allocatable :: derivs(:,:)
+      real*8 :: epot
+c
+      call mimic_prepare
+c
+      allocate(derivs(3,nbloc))
+      derivs = 0.0d0
 c
 c     evaluate the MM energy and gradient
 c
       call gradient(epot, derivs)
-      call reduceen(epot)
       call commforces(derivs)
 c
-c     assemble the global gradient on rank 0 by summing each rank's
-c     owned-atom contributions into a sparse (3,n) buffer
+      call mimic_stash_forces(derivs)
+      call mimic_stash_energy(epot)
 c
-      allocate(fglob(3,n))
-      fglob = 0.0d0
-      do i = 1, nloc
-         iglob = glob(i)
-         fglob(1,iglob) = derivs(1,i)
-         fglob(2,iglob) = derivs(2,i)
-         fglob(3,iglob) = derivs(3,i)
-      end do
-      call MPI_REDUCE(fglob, force, 3*n, MPI_REAL8, MPI_SUM, 0,
-     &                COMM_TINKER, ierr)
-      energy = epot
-c
-      deallocate(fglob)
       deallocate(derivs)
       end

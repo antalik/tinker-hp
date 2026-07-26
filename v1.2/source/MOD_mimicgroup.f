@@ -14,8 +14,13 @@ c     The MIMIC_GROUP keyword marks a subset of atoms handed to the MiMiC
 c     server (e.g. the QM region in a QM/MM run). For these atoms, the
 c     following exclusions are made:
 c       - charges are zeroed (kcharge)
+c       - permanent multipoles are zeroed (kmpole)
+c       - polarizabilities are zeroed (kpolar), so no induced dipoles
 c       - group-group vdW pairs are skipped (ehal/elj), group-MM kept
 c       - bonded terms dropped iff ALL of its atoms are in the group
+c
+c     The multipole sites themselves are kept in the pole list with their
+c     local frames intact, so that atom and pole indices are unchanged.
 c
 c     nmimic       number of MiMiC-group atoms
 c     mimic_group  per-atom logical flag, .true. for MiMiC-group atoms
@@ -96,6 +101,36 @@ c
          end if
       end do
       end function
+c
+c     zero the induced dipoles of the MiMiC group after a solve
+c
+c     Setting polarity to zero makes the initial guess mu = polarity*ef
+c     vanish, but it does not make the converged dipole vanish exactly:
+c     the solvers floor the diagonal of the polarizability at tinypol
+c     (1e-5), so a zero-polarity site relaxes to mu ~ tinypol*ef instead
+c     of zero. That is negligible in the energy but would put nonsense in
+c     the induced dipoles handed to the MiMiC server, so clear them here.
+c
+      subroutine mimic_zero_induced
+      use atoms, only: n
+      use mpole, only: pollist
+      use polar, only: uind, uinp
+      implicit none
+      integer :: i, ii, j
+c
+      if (nmimic == 0)  return
+      if (.not. allocated(mimic_group))  return
+c
+      do i = 1, n
+         if (.not. mimic_group(i))  cycle
+         ii = pollist(i)
+         if (ii == 0)  cycle
+         do j = 1, 3
+            uind(j,ii) = 0.0d0
+            uinp(j,ii) = 0.0d0
+         end do
+      end do
+      end subroutine
 c
 c     drop every bonded term whose atoms are all in the MiMiC group by
 c     zeroing its (globally indexed, shared-memory) force constants; terms

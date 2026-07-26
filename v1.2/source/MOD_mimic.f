@@ -58,8 +58,17 @@ c
       public :: mimic_send_num_boundary_bonds
       public :: mimic_send_boundary_bonds
       public :: mimic_recv_positions
+      public :: mimic_recv_field
       public :: mimic_send_forces
       public :: mimic_send_energy
+      public :: mimic_send_induction_energy
+      public :: mimic_send_induced_dipoles
+      public :: mimic_stash_energy
+      public :: mimic_stash_forces
+      public :: mimic_check_polar
+      public :: forces_valid
+      public :: energy_valid
+      public :: dipoles_valid
 #ifdef MIMIC
 c     re-exported request tags so the client loop can dispatch on them
       public :: MCL_EXIT
@@ -87,6 +96,11 @@ c     re-exported request tags so the client loop can dispatch on them
       public :: MCL_SEND_NUM_BOUNDARY_BONDS
       public :: MCL_SEND_BOUNDARY_BOND_ATOMS
       public :: MCL_RECV_PARTICLE_POSITIONS
+      public :: MCL_SEND_UPDATED_PARTICLE_MULTIPOLES
+      public :: MCL_RECV_EL_FIELD_ON_PARTICLE
+      public :: MCL_SEND_PARTICLE_INDUCED_DIPOLES
+      public :: MCL_SEND_INDUCTION_ENERGY
+      public :: MCL_COMPUTE_ENERGY
       public :: MCL_COMPUTE_FORCES
       public :: MCL_SEND_PARTICLE_FORCES
       public :: MCL_SEND_ENERGY
@@ -100,6 +114,22 @@ c     cached mapping of atoms to dense force-field-type "species"
       logical :: mimic_species_built = .false.
       integer, allocatable :: mimic_spec_of_atom(:)
       integer, allocatable :: mimic_spec_type(:)
+c
+c     a quantity is only sent after the matching MCL_COMPUTE_* request
+c     has produced it; receiving new coordinates invalidates everything,
+c     receiving a new external field invalidates the induced dipoles
+c
+      logical :: forces_valid = .false.
+      logical :: energy_valid = .false.
+      logical :: dipoles_valid = .false.
+c
+c     rank-local results stashed by the compute routines; the reduction
+c     is deferred to the request that asks for the quantity, so it must
+c     leave these untouched and stay idempotent
+c
+      real*8 :: mimic_epot_loc = 0.0d0
+      real*8 :: mimic_ep_loc = 0.0d0
+      real*8, allocatable :: mimic_fglob(:,:)
       save
 c
       contains
@@ -459,38 +489,97 @@ c     send the multipole order (0 = point charges)
 c
       subroutine mimic_send_multipole_order
       use domdec, only: rank
+      use potent, only: use_charge, use_mpole
       implicit none
 #ifdef MIMIC
       integer :: order
       if (rank /= 0) return
-      order = 0
+      if (use_mpole) then
+         order = 2
+      else if (use_charge) then
+         order = 0
+      else
+         call fatal
+      end if
       call mcl_send(order, 1, MCL_DATA, MIMIC_SERVER)
 #else
       call mimic_disabled
 #endif
       end subroutine
 c
-c     send the per-atom point charges (fixed-charge FF; mpole deferred)
+c     rotate the permanent multipoles of every site into the lab frame;
+c     rotpole only covers a rank's local blocks, so no rank holds a
+c     global rpole. Called on rank 0 alone: it is the only rank that
+c     sends, and both chkpole and rotpole write shared-memory arrays.
+c     rpole is rebuilt by empole/epolar on every energy evaluation, so
+c     overwriting it here is harmless
+c
+      subroutine mimic_build_rpole
+      use mpole, only: npole, ipole
+      implicit none
+#ifdef MIMIC
+      integer :: i
+      real*8 :: a(3,3)
+      call chkpole(.true.)
+      do i = 1, npole
+         call rotmat(i, ipole(i), a)
+         call rotsite(i, a)
+      end do
+#endif
+      end subroutine
+c
+c     send the permanent multipoles in atomic units: for AMOEBA the ten
+c     lab-frame components [q, dx,dy,dz, qxx,qxy,qxz,qyy,qyz,qzz] per
+c     atom, undoing the factor of three Tinker folds into the traceless
+c     quadrupole; for a fixed-charge FF the per-atom point charges
 c
       subroutine mimic_send_multipoles
       use atoms, only: n
       use charge, only: pchg, chglist
       use domdec, only: rank
-      use potent, only: use_charge
+      use mpole, only: rpole, pollist
+      use potent, only: use_charge, use_mpole
+      use units, only: bohr
       implicit none
 #ifdef MIMIC
       real*8, allocatable :: buf(:)
-      integer :: i, k
+      real*8 :: dfac, qfac
+      integer :: i, k, ii
       if (rank /= 0) return
-      allocate(buf(n))
-      buf = 0.0d0
-      if (use_charge) then
+      if (use_mpole) then
+         call mimic_build_rpole
+         dfac = 1.0d0 / bohr
+         !qfac = 3.0d0 / bohr**2
+         qfac = 2.0d0 / bohr**2
+         allocate(buf(10*n))
+         buf = 0.0d0
          do i = 1, n
-            k = chglist(i)
-            if (k /= 0) buf(i) = pchg(k)
+            ii = pollist(i)
+            if (ii == 0) cycle
+            k = 10 * (i-1)
+            buf(k+1)  = rpole(1,ii)
+            buf(k+2)  = rpole(2,ii) * dfac
+            buf(k+3)  = rpole(3,ii) * dfac
+            buf(k+4)  = rpole(4,ii) * dfac
+            buf(k+5)  = rpole(5,ii) * qfac
+            buf(k+6)  = rpole(6,ii) * qfac
+            buf(k+7)  = rpole(7,ii) * qfac
+            buf(k+8)  = rpole(9,ii) * qfac
+            buf(k+9)  = rpole(10,ii) * qfac
+            buf(k+10) = rpole(13,ii) * qfac
          end do
+         call mcl_send(buf, 10*n, MCL_DATA, MIMIC_SERVER)
+      else
+         allocate(buf(n))
+         buf = 0.0d0
+         if (use_charge) then
+            do i = 1, n
+               k = chglist(i)
+               if (k /= 0) buf(i) = pchg(k)
+            end do
+         end if
+         call mcl_send(buf, n, MCL_DATA, MIMIC_SERVER)
       end if
-      call mcl_send(buf, n, MCL_DATA, MIMIC_SERVER)
       deallocate(buf)
 #else
       call mimic_disabled
@@ -655,54 +744,298 @@ c
       call MPI_BCAST(x, n, MPI_REAL8, 0, COMM_TINKER, ierr)
       call MPI_BCAST(y, n, MPI_REAL8, 0, COMM_TINKER, ierr)
       call MPI_BCAST(z, n, MPI_REAL8, 0, COMM_TINKER, ierr)
+c
+      forces_valid = .false.
+      energy_valid = .false.
+      dipoles_valid = .false.
 #else
       call mimic_disabled
 #endif
       end subroutine
 c
-c     send the forces (Hartree/bohr) gathered on rank 0; the argument is
-c     the global gradient dE/dx (kcal/mol/Angstrom), so force = -grad
+c     receive the external electric field at the atomic sites and make
+c     it available on every rank; atomic units (e/bohr**2) become the
+c     Tinker units of the induced dipole rhs (e/Angstrom**2)
 c
-      subroutine mimic_send_forces(grad)
+      subroutine mimic_recv_field
       use atoms, only: n
-      use domdec, only: rank
-      use units, only: bohr, hartree
+      use domdec, only: rank, COMM_TINKER
+      use mimicfield, only: mimic_efield, mimic_field_set,
+     &                      mimic_alloc_field
+      use units, only: bohr
+      use mpi
       implicit none
-      real*8 :: grad(3,*)
 #ifdef MIMIC
       real*8, allocatable :: buf(:)
       real*8 :: fac
-      integer :: i
-      if (rank /= 0) return
-      fac = bohr / hartree
-      allocate(buf(3*n))
-      do i = 1, n
-         buf(3*i-2) = -grad(1,i) * fac
-         buf(3*i-1) = -grad(2,i) * fac
-         buf(3*i)   = -grad(3,i) * fac
+      integer :: i, ierr
+c
+      call mimic_alloc_field
+      if (rank == 0) then
+         fac = 1.0d0 / bohr**2
+         allocate(buf(3*n))
+         call mcl_receive(buf, 3*n, MCL_DATA, MIMIC_SERVER)
+         do i = 1, n
+            mimic_efield(1,i) = buf(3*i-2) * fac
+            mimic_efield(2,i) = buf(3*i-1) * fac
+            mimic_efield(3,i) = buf(3*i)   * fac
+         end do
+         deallocate(buf)
+      end if
+      call MPI_BCAST(mimic_efield, 3*n, MPI_REAL8, 0, COMM_TINKER,
+     &               ierr)
+      mimic_field_set = .true.
+c
+c     the dipoles no longer correspond to the field on record
+c
+      dipoles_valid = .false.
+#else
+      call mimic_disabled
+#endif
+      end subroutine
+c
+c     stash the rank-local energies produced by a compute request; the
+c     reduction is deferred to whichever send request asks for them
+c
+      subroutine mimic_stash_energy(epot)
+      use energi, only: ep
+      implicit none
+      real*8 :: epot
+      mimic_epot_loc = epot
+      mimic_ep_loc = ep
+      energy_valid = .true.
+      dipoles_valid = .true.
+      end subroutine
+c
+c     scatter this rank's owned gradient into a sparse global buffer
+c
+      subroutine mimic_stash_forces(derivs)
+      use atoms, only: n
+      use domdec, only: nloc, glob
+      implicit none
+      real*8 :: derivs(3,*)
+      integer :: i, iglob
+      if (.not. allocated(mimic_fglob))  allocate(mimic_fglob(3,n))
+      mimic_fglob = 0.0d0
+      do i = 1, nloc
+         iglob = glob(i)
+         mimic_fglob(1,iglob) = derivs(1,i)
+         mimic_fglob(2,iglob) = derivs(2,i)
+         mimic_fglob(3,iglob) = derivs(3,i)
       end do
-      call mcl_send(buf, 3*n, MCL_DATA, MIMIC_SERVER)
+      forces_valid = .true.
+      end subroutine
+c
+c     reduce the stashed gradient onto rank 0 and send the forces in
+c     Hartree/bohr; the stash holds dE/dx (kcal/mol/Angstrom), so the
+c     force is -grad. Collective: every rank reaches this routine
+c
+      subroutine mimic_send_forces
+      use atoms, only: n
+      use domdec, only: rank, COMM_TINKER
+      use iounit, only: iout
+      use units, only: bohr, hartree
+      use mpi
+      implicit none
+#ifdef MIMIC
+      real*8, allocatable :: buf(:), grad(:,:)
+      real*8 :: fac
+      integer :: i, ierr
+c
+      if (.not. forces_valid) then
+         if (rank == 0) write (iout,10)
+   10    format (/,' MIMIC  --  forces requested before MCL_COMPUTE',
+     &             '_FORCES')
+         call fatal
+      end if
+      allocate(grad(3,n))
+      grad = 0.0d0
+      call MPI_REDUCE(mimic_fglob, grad, 3*n, MPI_REAL8, MPI_SUM, 0,
+     &                COMM_TINKER, ierr)
+      if (rank == 0) then
+         fac = bohr / hartree
+         allocate(buf(3*n))
+         do i = 1, n
+            buf(3*i-2) = -grad(1,i) * fac
+            buf(3*i-1) = -grad(2,i) * fac
+            buf(3*i)   = -grad(3,i) * fac
+         end do
+         call mcl_send(buf, 3*n, MCL_DATA, MIMIC_SERVER)
+         deallocate(buf)
+      end if
+      deallocate(grad)
+#else
+      call mimic_disabled
+#endif
+      end subroutine
+c
+c     reduce and send the total potential energy in Hartree
+c
+      subroutine mimic_send_energy
+      use domdec, only: rank, COMM_TINKER
+      use iounit, only: iout
+      use units, only: hartree
+      use mpi
+      implicit none
+#ifdef MIMIC
+      real*8 :: e
+      integer :: ierr
+c
+      if (.not. energy_valid) then
+         if (rank == 0) write (iout,10)
+   10    format (/,' MIMIC  --  energy requested before MCL_COMPUTE',
+     &             '_ENERGY or MCL_COMPUTE_FORCES')
+         call fatal
+      end if
+      e = 0.0d0
+      call MPI_REDUCE(mimic_epot_loc, e, 1, MPI_REAL8, MPI_SUM, 0,
+     &                COMM_TINKER, ierr)
+      if (rank == 0) then
+         e = e / hartree
+         call mcl_send(e, 1, MCL_DATA, MIMIC_SERVER)
+      end if
+#else
+      call mimic_disabled
+#endif
+      end subroutine
+c
+c     reduce and send the AMOEBA induction (polarization) energy in
+c     Hartree; this is Tinker's own ep, contracting the induced dipoles
+c     with the permanent MM field only. The cross term with the server's
+c     external field belongs to the server
+c
+      subroutine mimic_send_induction_energy
+      use domdec, only: rank, COMM_TINKER
+      use iounit, only: iout
+      use units, only: hartree
+      use mpi
+      implicit none
+#ifdef MIMIC
+      real*8 :: e
+      integer :: ierr
+c
+      if (.not. energy_valid) then
+         if (rank == 0) write (iout,10)
+   10    format (/,' MIMIC  --  induction energy requested before',
+     &             ' MCL_COMPUTE_ENERGY or MCL_COMPUTE_FORCES')
+         call fatal
+      end if
+      e = 0.0d0
+      call MPI_REDUCE(mimic_ep_loc, e, 1, MPI_REAL8, MPI_SUM, 0,
+     &                COMM_TINKER, ierr)
+      if (rank == 0) then
+         e = e / hartree
+         call mcl_send(e, 1, MCL_DATA, MIMIC_SERVER)
+      end if
+#else
+      call mimic_disabled
+#endif
+      end subroutine
+c
+c     gather and send the induced dipoles in atomic units, the d and p
+c     sets summed into one. uind/uinp are dimensioned over all atoms but
+c     only the locally owned poles hold current values, so each rank
+c     contributes those alone; under use_pmecore the reciprocal-only
+c     ranks hold a second copy and must contribute nothing
+c
+      subroutine mimic_send_induced_dipoles
+      use atmlst, only: poleglob
+      use atoms, only: n
+      use domdec, only: rank, ndir, COMM_TINKER
+      use iounit, only: iout
+      use mpole, only: npoleloc, ipole
+      use polar, only: uind, uinp
+      use potent, only: use_pmecore
+      use units, only: bohr
+      use mpi
+      implicit none
+#ifdef MIMIC
+      real*8, allocatable :: buf(:,:), dip(:)
+      real*8 :: fac
+      integer :: i, j, ierr, iipole, iglob
+c
+      if (.not. dipoles_valid) then
+         if (rank == 0) write (iout,10)
+   10    format (/,' MIMIC  --  induced dipoles requested before',
+     &             ' MCL_COMPUTE_ENERGY or MCL_COMPUTE_FORCES')
+         call fatal
+      end if
+      allocate(buf(3,n))
+      buf = 0.0d0
+      if ((.not. use_pmecore) .or. rank <= ndir-1) then
+         do i = 1, npoleloc
+            iipole = poleglob(i)
+            iglob = ipole(iipole)
+            do j = 1, 3
+               buf(j,iglob) = uind(j,iipole) + uinp(j,iipole)
+            end do
+         end do
+      end if
+      allocate(dip(3*n))
+      dip = 0.0d0
+      call MPI_REDUCE(buf, dip, 3*n, MPI_REAL8, MPI_SUM, 0,
+     &                COMM_TINKER, ierr)
+      if (rank == 0) then
+         fac = 1.0d0 / bohr
+         do i = 1, 3*n
+            dip(i) = dip(i) * fac
+         end do
+         call mcl_send(dip, 3*n, MCL_DATA, MIMIC_SERVER)
+      end if
+      deallocate(dip)
       deallocate(buf)
 #else
       call mimic_disabled
 #endif
       end subroutine
 c
-c     send the potential energy in Hartree
+c     refuse the force-field terms and polarization solvers the MiMiC
+c     group exclusions do not cover, warn about a loose induced dipole
+c     convergence, and switch the initial guess from the step-history
+c     extrapolation to the previous converged dipoles
 c
-      subroutine mimic_send_energy(energy)
+      subroutine mimic_check_polar
       use domdec, only: rank
-      use units, only: hartree
+      use iounit, only: iout
+      use mimicgroup, only: nmimic
+      use polpot, only: polalg, polgsf, poleps
+      use potent, only: use_polar, use_polarshortreal,
+     &                  use_chgpen, use_chgtrn, use_chgflx
+      use uprior, only: use_pred
       implicit none
-      real*8 :: energy
-#ifdef MIMIC
-      real*8 :: e
-      if (rank /= 0) return
-      e = energy / hartree
-      call mcl_send(e, 1, MCL_DATA, MIMIC_SERVER)
-#else
-      call mimic_disabled
-#endif
+c
+c     zeroing pole does not zero the charge penetration and charge flux
+c     parameters, so the group would keep some electrostatics
+c
+      if (nmimic > 0 .and.
+     &    (use_chgpen .or. use_chgtrn .or. use_chgflx)) then
+         if (rank == 0) write (iout,5)
+    5    format (/,' MIMIC  --  charge penetration, charge transfer',
+     &             ' and charge flux are not excluded for the',
+     &           /,' MiMiC group and are unsupported')
+         call fatal
+      end if
+c
+      if (.not. use_polar)  return
+c
+      if (poleps > 1.0d-6) then
+         if (rank == 0) write (iout,7)  poleps
+    7    format (/,' MIMIC  --  induced dipole convergence POLAR-EPS',
+     &             1x,d10.3,' is looser than the QM SCF will need;',
+     &           /,' the coupled QM/MM polarization loop may not',
+     &             ' converge')
+      end if
+c
+      if (use_polarshortreal .or. polalg == 5) then
+         if (rank == 0) write (iout,10)
+   10    format (/,' MIMIC  --  the divide-and-conquer (POLAR-ALG 5,',
+     &             ' the default) and short-range polarization',
+     &           /,' solvers do not accept an external field; add',
+     &             ' POLAR-ALG 1 to the key file and do not use RESPA')
+         call fatal
+      end if
+      use_pred = .false.
+      polgsf = 1
       end subroutine
 c
 #ifndef MIMIC

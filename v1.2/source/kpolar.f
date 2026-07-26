@@ -25,6 +25,7 @@ c
       use keys
       use kpolpr
       use kpolr
+      use mimicgroup, only: mimic_group, nmimic
       use mpole
       use neigh
       use pme
@@ -316,6 +317,14 @@ c       assign polarization group connectivity of each atom
 c
       call polargrp
 c
+c     mimic: zero the polarizability of the group 
+c
+      if (allocated(mimic_group)) then
+         do i = 1, n
+            if (mimic_group(i))  polarity(i) = 0.0d0
+         end do
+      end if
+c
 c     remove zero and undefined polarizable sites from the list
 c
       if ((use_polar .or. use_repuls) .and. .not.use_chgtrn) then
@@ -384,6 +393,15 @@ c     turn off polarizable multipole potential if it is not used
 c
       if (npole .eq. 0)  then
         use_mpole = .false.
+      end if
+c
+c     check that there are some polarizable sites outside of the mimic_group
+c
+      if (npolar .eq. 0 .and. nmimic .gt. 0) then
+         if (rank .eq. 0) write (iout,15)
+   15    format (/,' KPOLAR  --  every polarizable site is in the',
+     &             ' MiMiC group; nothing left to polarize')
+         call fatal
       end if
       if (npolar .eq. 0)  use_polar = .false.
       if (ncp .ne. 0)  use_chgpen = .true.

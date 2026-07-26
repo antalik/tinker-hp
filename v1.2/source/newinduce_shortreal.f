@@ -20,6 +20,7 @@ c
       use inform
       use iounit
       use math
+      use mimicgroup, only: mimic_zero_induced
       use mpole
       use mutant
       use pme
@@ -156,6 +157,10 @@ c
              uinp(j,iipole) = mu(j,2,i)
            end do
          end do
+c
+c     zero induced dipoles in the mimic group
+c
+      call mimic_zero_induced
 c
 c     update the lists of previous induced dipole values
 c

@@ -247,6 +247,7 @@ libtinkermod_a_SOURCES += MOD_mdstuf.f
 libtinkermod_a_SOURCES += MOD_mdstuf1.f
 libtinkermod_a_SOURCES += MOD_merck.f
 libtinkermod_a_SOURCES += MOD_mimic.f
+libtinkermod_a_SOURCES += MOD_mimicfield.f
 libtinkermod_a_SOURCES += MOD_mimicgroup.f
 libtinkermod_a_SOURCES += MOD_minima.f
 libtinkermod_a_SOURCES += MOD_molcul.f

@@ -28,6 +28,7 @@ c
       use kcpen
       use keys
       use kmulti
+      use mimicgroup, only: mimic_group
       use mpole
       use neigh
       use pme
@@ -554,6 +555,18 @@ c
          end if
          polsiz(i) = size
       end do
+c
+c     mimic: zero the permanent multipoles of the group
+c
+      if (allocated(mimic_group)) then
+         do i = 1, n
+            if (mimic_group(i)) then
+               do k = 1, maxpole
+                  pole(k,i) = 0.0d0
+               end do
+            end if
+         end do
+      end if
 c
 c     nd new charge penetration parameters in the keyfile
 c

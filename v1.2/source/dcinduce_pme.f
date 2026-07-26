@@ -20,6 +20,7 @@ c
       use inform
       use iounit
       use math
+      use mimicgroup, only: mimic_zero_induced
       use mpole
       use pme
       use polar
@@ -281,6 +282,10 @@ c
           end do
         end do
       end if
+c
+c     zero induced dipoles in the mimic group
+c
+      call mimic_zero_induced
       deallocate (buffermpi)
       deallocate (buffermpimu)
       if (rank.le.ndir-1) then
