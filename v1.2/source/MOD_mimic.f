@@ -64,6 +64,7 @@ c
       public :: mimic_send_induction_energy
       public :: mimic_send_induced_dipoles
       public :: mimic_stash_energy
+      public :: mimic_stash_dipoles
       public :: mimic_stash_forces
       public :: mimic_check_polar
       public :: forces_valid
@@ -98,10 +99,12 @@ c     re-exported request tags so the client loop can dispatch on them
       public :: MCL_RECV_PARTICLE_POSITIONS
       public :: MCL_SEND_UPDATED_PARTICLE_MULTIPOLES
       public :: MCL_RECV_EL_FIELD_ON_PARTICLE
-      public :: MCL_SEND_PARTICLE_INDUCED_DIPOLES
+      public :: MCL_SEND_PARTICLE_IND_DIPOLES
+      public :: MCL_SEND_PARTICLE_IND_DIPOLES_AVG
       public :: MCL_SEND_INDUCTION_ENERGY
       public :: MCL_COMPUTE_ENERGY
       public :: MCL_COMPUTE_FORCES
+      public :: MCL_COMPUTE_INDUCED_MULTIPOLES
       public :: MCL_SEND_PARTICLE_FORCES
       public :: MCL_SEND_ENERGY
 #endif
@@ -807,6 +810,14 @@ c
       dipoles_valid = .true.
       end subroutine
 c
+c     mark the induced dipoles of a polarization-only solve as current;
+c     energy and forces were not computed, so their flags are left alone
+c
+      subroutine mimic_stash_dipoles
+      implicit none
+      dipoles_valid = .true.
+      end subroutine
+c
 c     scatter this rank's owned gradient into a sparse global buffer
 c
       subroutine mimic_stash_forces(derivs)
@@ -938,7 +949,7 @@ c     only the locally owned poles hold current values, so each rank
 c     contributes those alone; under use_pmecore the reciprocal-only
 c     ranks hold a second copy and must contribute nothing
 c
-      subroutine mimic_send_induced_dipoles
+      subroutine mimic_send_induced_dipoles(option)
       use atmlst, only: poleglob
       use atoms, only: n
       use domdec, only: rank, ndir, COMM_TINKER
@@ -950,6 +961,7 @@ c
       use mpi
       implicit none
 #ifdef MIMIC
+      character(len=*), optional, intent(in) :: option
       real*8, allocatable :: buf(:,:), dip(:)
       real*8 :: fac
       integer :: i, j, ierr, iipole, iglob
@@ -963,13 +975,28 @@ c
       allocate(buf(3,n))
       buf = 0.0d0
       if ((.not. use_pmecore) .or. rank <= ndir-1) then
-         do i = 1, npoleloc
-            iipole = poleglob(i)
-            iglob = ipole(iipole)
-            do j = 1, 3
-               buf(j,iglob) = uind(j,iipole) + uinp(j,iipole)
-            end do
-         end do
+         if (present(option)) then
+            if (option == 'averaged') then
+               do i = 1, npoleloc
+                  iipole = poleglob(i)
+                  iglob = ipole(iipole)
+                  do j = 1, 3
+                     buf(j,iglob) = 0.5d0 * (uind(j,iipole) 
+     &                                       + uinp(j,iipole))
+                  end do
+               end do
+            elseif (option == 'd') then
+               do i = 1, npoleloc
+                  iipole = poleglob(i)
+                  iglob = ipole(iipole)
+                  do j = 1, 3
+                     buf(j,iglob) = uind(j,iipole)
+                  end do
+               end do
+            else
+               ! ERROR
+            end if
+         end if
       end if
       allocate(dip(3*n))
       dip = 0.0d0
@@ -1032,6 +1059,17 @@ c
      &             ' the default) and short-range polarization',
      &           /,' solvers do not accept an external field; add',
      &             ' POLAR-ALG 1 to the key file and do not use RESPA')
+         call fatal
+      end if
+c
+c     the TCG solver goes through epolar3tcg, which never sees the
+c     external field and cannot be run as a standalone solve
+c
+      if (polalg == 3) then
+         if (rank == 0) write (iout,20)
+   20    format (/,' MIMIC  --  the truncated conjugate gradient',
+     &             ' solver (POLAR-ALG 3) does not accept an',
+     &           /,' external field; use POLAR-ALG 1 or 2')
          call fatal
       end if
       use_pred = .false.

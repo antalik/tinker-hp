@@ -440,7 +440,11 @@ c
      $    timestep*100/timestep
  250      format('Ave time per step                 =  ',F14.6,
      $      ' seconds',2x,F14.3,'%')
-          write(iout,260) 86400*dt*dble(iprint)/(1000*timestep)
+c
+c     no time step is known to the MiMiC client, which passes dt = 0
+c
+          if (dt.gt.0d0)
+     $      write(iout,260) 86400*dt*dble(iprint)/(1000*timestep)
  260      format(' ns per day: ',f15.4)
           write(iout,*) '=================================='
         end if
